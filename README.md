@@ -88,18 +88,30 @@ compilers:
   - `export NAGFORTRAN_NUM_IMAGES=12`
   - `./a.out <arguments>`
 
+**Update:** The extremely slow times originally reported for ifort were
+partially a result of the executable hammering the network for some
+inexplicable reason. Documentation suggests that things should "just work"
+on a single shared memory node without any fiddling, but this was not the
+case for me. Setting the following environment variables resolves the
+network issue -- it no longer appear to generate any network traffic.
+See this [Intel page](https://www.intel.com/content/www/us/en/develop/documentation/fortran-compiler-oneapi-dev-guide-and-reference/top/optimization-and-programming-guide/coarrays-1/using-coarrays.html).
+```
+export I_MPI_FABRICS=shm
+export I_MPI_DEVICE=shm
+```
 ### Results
-#### 20 Jan 2022
+#### 20 Jan 2022 (updated 21 Jan)
+
 
 These were collected using a 12-core AMD Threadripper 2920X CPU.
 
 test-#image | ifort | gfortran | nagfor
 ---------- | ----- | -------- | ------
-B0-12 | 0.37 s | 0.033 s | 0.000034 s
-B1-12 | 0.89 s | 0.061 s | 0.000044 s
-B2-12 | 2.1 s  | 0.12 s  | 0.000057 s
-B3-12 | 8.9 s  | 0.29 s  | 0.000086 s
-B4-12 | 34 s   | 0.45 s  | 0.00032 s
+B0-12 | 0.023 s | 0.033 s | 0.000034 s
+B1-12 | 0.076 s | 0.061 s | 0.000044 s
+B2-12 | 0.38 s  | 0.12 s  | 0.000057 s
+B3-12 | 2.8 s  | 0.29 s  | 0.000086 s
+B4-12 | 13 s   | 0.45 s  | 0.00032 s
 
 Note: Intel misidentifies the layout of this processor as 6-cores with
 4 hardware threads per core. I used
