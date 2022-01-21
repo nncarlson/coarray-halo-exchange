@@ -40,7 +40,7 @@ program main
 
   call imap%init(bsize, offP_index)
   
-  print *, this_PE, ':', imap%onP_size, imap%offP_size
+  !print *, this_PE, ':', imap%onP_size, imap%offP_size
   
   if (this_PE == 1) then
     write(*,'(a)') 'Timing gather of off-process data elements'
