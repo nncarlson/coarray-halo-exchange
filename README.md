@@ -85,7 +85,7 @@ compilers:
   - `cafrun -n 12 ./a.out <arguments>`
 * **nagfor:** NAG Fortran 7.1.7103
   - `nagfor -coarray -O3 -f2018 index_map_type.F90 main.f90`
-  - `export NAGFOR_NUM_IMAGES=12`
+  - `export NAGFORTRAN_NUM_IMAGES=12`
   - `./a.out <arguments>`
 
 ### Results
