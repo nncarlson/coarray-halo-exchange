@@ -4,10 +4,10 @@ module index_map_type
   private
 
   type, public :: index_map
-    integer :: onP_size = 0 ! number of indices assigned to this process (on-process)
-    integer :: offP_size    ! number of off-process indices referenced from this process
-    integer :: local_size   ! number of local indices (on and off-process)
-    integer :: global_size  ! size of the global index set
+    integer :: onP_size = 0    ! number of indices assigned to this process (on-process)
+    integer :: offP_size = 0   ! number of off-process indices referenced from this process
+    integer :: local_size = 0  ! number of local indices (on and off-process)
+    integer :: global_size = 0 ! size of the global index set
     integer :: first        ! first global index of the range assigned to this process
     integer :: last         ! last global index of the range assigned to this process
     integer, allocatable :: offP_index(:)
