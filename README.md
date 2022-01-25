@@ -8,6 +8,13 @@ process calculates the unknown variables defined on its subdomain.
 Processes need to exchange values along their subdomain boundary with
 their neighbors in a *halo exchange* operation.
 
+>I'd very much welcome receiving results from different platforms and/or
+compilers than those given below. There is test data for a quite a few
+different numbers of images/process, and I can generate others if asked.
+I also welcome comments on the code, and other coarray approaches that
+might be more efficient. If you have any thoughts on why Intel performs
+so poorly, I'd especially like to hear those.
+
 ### Background
 The particular form of the halo exchange considered here originates from the
 MPI-parallel code [Truchas](https://gitlab.com/truchas/truchas). Abstractly
@@ -35,7 +42,7 @@ on-process index; this is referred to as a *gather* (of off-process data)
 operation.
 
 This distributed index set mapping and the associated gather operation
-are implemented by the module [`index_map_type.F90`](index_map_type.f90).
+are implemented by the module [`index_map_type.f90`](index_map_type.f90).
 
 ### The Tests
 The file [`main.f90`](main.f90) is a test driver. It reads data that
@@ -76,47 +83,84 @@ operation itself is timed.
 Here is a summary of how to compile and run the tests for different
 compilers:
 
-* **ifort:** Intel Fortran and MPI 2021.4.0
+* **Intel:**
   - `ifort -coarray -O3 index_map_type.f90 main.f90`
   - `export FOR_COARRAY_NUM_IMAGES=12`
   - `./a.out <arguments>`
-* **gfortran:** GCC 11.2.0, MPICH 3.3.2, OpenCoarrays 2.9.2-13-g235167d
+* **GFortran/OpenCoarrays:**
   - `caf -O3 index_map_type.f90 main.f90`
   - `cafrun -n 12 ./a.out <arguments>`
-* **nagfor:** NAG Fortran 7.1.7103
+* **NAG:**
   - `nagfor -coarray -O3 -f2018 index_map_type.F90 main.f90`
   - `export NAGFORTRAN_NUM_IMAGES=12`
   - `./a.out <arguments>`
 
-**Update:** The extremely slow times originally reported for ifort were
-partially a result of the executable hammering the network for some
-inexplicable reason. Documentation suggests that things should "just work"
-on a single shared memory node without any fiddling, but this was not the
-case for me. Setting the following environment variables resolves the
-network issue -- it no longer appear to generate any network traffic.
-See this [Intel page](https://www.intel.com/content/www/us/en/develop/documentation/fortran-compiler-oneapi-dev-guide-and-reference/top/optimization-and-programming-guide/coarrays-1/using-coarrays.html).
+### Results (updated 22 Jan)
+These results were collected on a standalone Linux workstation with 32GB
+of memory and a 12-core AMD Threadripper 2920X CPU.
+
+* **ifort:** Intel Fortran and MPI 2021.4.0
+* **gfortran:** GCC 11.2.0, MPICH 3.3.2, OpenCoarrays 2.9.2-13-g235167d
+* **nagfor:** NAG Fortran 7.1.7103
+* **MPI:** Baseline MPI implementation, GCC/gfortran 11.2.0, MPICH 3.3.2
+  (see below)
+
+test-#image | ifort | gfortran | nagfor | MPI
+:---------: | :---: | :------: | :----: | :-:
+B0-12 | 0.023 s | 0.033 s |  23e-6 s | 12e-6 s
+B1-12 | 0.076 s | 0.061 s |  28e-6 s | 17e-6 s
+B2-12 | 0.38 s  | 0.12 s  |  37e-6 s | 27e-6 s
+B3-12 | 2.8 s   | 0.29 s  |  56e-6 s | 42e-6 s
+B4-12 | 13 s    | 0.45 s  | 140e-6 s | 99e-6 s
+
+#### Comments
+* By default the Intel version was needlessly hammering the network, which
+  resulted in *even larger* times than shown here. This was solved by setting
+  the environment variables `I_MPI_FABRICS` and `I_MPI_DEVICE` to `shm`; see
+  this [Intel page](https://www.intel.com/content/www/us/en/develop/documentation/fortran-compiler-oneapi-dev-guide-and-reference/top/optimization-and-programming-guide/coarrays-1/using-coarrays.html).
+* Intel misidentifies the layout of this processor as 6-cores with
+  4 hardware threads per core. I used
+
+      export I_MPI_PIN_PROCESSOR_LIST=0-11
+
+  which appears to properly assign processes to cores (up to 12 processes).
+  However it made little actual difference in the ultimate timings.
+
+
+### Reference MPI Implementation
+
+An MPI implementation of the halo exchange is found in the `mpi` directory.
+This serves as a baseline against which to assess the different coarray
+implementations. It uses a graph communicator and MPI-3 neighborhood
+collective to perform the halo exchange.
+
+Compiling and running the MPI version of the test goes something like
 ```
-export I_MPI_FABRICS=shm
-export I_MPI_DEVICE=shm
+mpif90 -O3 mpi/index_map_type.f90 mpi/main.f90
+mpirun -np 12 ./a.out <arguments>
 ```
-### Results
-#### 20 Jan 2022 (updated 21 Jan)
+#### Baseline Timings
 
+These results were collected on a standalone Linux workstation with 32GB
+of memory and a 12-core AMD Threadripper 2920X CPU.
 
-These were collected using a 12-core AMD Threadripper 2920X CPU.
+* **mpich:**   GCC/gfortran 11.2.0 and MPICH 3.3.2
+* **openmpi:** GCC/gfortran 11.2.0 and OpenMPI 4.1.2
+* **intel:**   Intel Fortran/MPI 2021.4.0
 
-test-#image | ifort | gfortran | nagfor
----------- | ----- | -------- | ------
-B0-12 | 0.023 s | 0.033 s | 0.000034 s
-B1-12 | 0.076 s | 0.061 s | 0.000044 s
-B2-12 | 0.38 s  | 0.12 s  | 0.000057 s
-B3-12 | 2.8 s  | 0.29 s  | 0.000086 s
-B4-12 | 13 s   | 0.45 s  | 0.00032 s
+test-#image | mpich | openmpi | intel
+:---------: | :---: | :-----: | :---:
+B0-12 | 12 µs | 13 µs |  71 µs
+B1-12 | 17 µs | 26 µs |  69 µs
+B2-12 | 27 µs | 45 µs |  77 µs
+B3-12 | 42 µs | 68 µs | 100 µs
+B4-12 | 99 µs | 99 µs | 150 µs
 
-Note: Intel misidentifies the layout of this processor as 6-cores with
-4 hardware threads per core. I used
-
-    export I_MPI_PIN_PROCESSOR_LIST=0-11
-
-which appears to properly assign processes to cores (up to 12 processes).
-However it made little actual difference in the ultimate timings.
+##### Comments
+* Don't take the times too literally. It's hard to time something that
+  takes such little time. They were collected using the `system_clock`
+  intrinsic and averaged 10,000 iterations of the gather procedure.
+* The Intel-built test was needlessly hammering on the network which likely
+  accounts for at least some of its significantly larger times. The settings
+  that kept the coarray version from doing the same thing, don't work/don't
+  apply here.

@@ -26,6 +26,7 @@ program main
 
   use,intrinsic :: iso_fortran_env, only: int64, error_unit
   use index_map_type
+  use mpi_f08
   implicit none
 
   logical :: is_IOP
@@ -35,9 +36,10 @@ program main
   character(63) :: prog, datadir, filename, arg
   integer(int64) :: t1, t2, rate
 
-  nPE = num_images()
-  this_PE = this_image()
-  is_IOP = (this_PE == 1)
+  call MPI_Init()
+  call MPI_Comm_size(MPI_COMM_WORLD, nPE)
+  call MPI_Comm_rank(MPI_COMM_WORLD, this_PE)
+  is_IOP = (this_PE == 0)
 
   call get_command_argument(0, prog)
   num_arg = command_argument_count()
@@ -56,7 +58,7 @@ program main
     repeat = 1
   end if
 
-  write(filename,'(a,i3.3)') trim(datadir) // '/data', this_PE
+  write(filename,'(a,i3.3)') trim(datadir) // '/data', this_PE+1
   open(newunit=lun,file=filename,access='stream',form='unformatted',action='read')
 
   read(lun) bsize, noffP
@@ -64,10 +66,9 @@ program main
   read(lun) offP_index
   close(lun)
 
-  call imap%init(bsize, offP_index)
+  call imap%init(MPI_COMM_WORLD, bsize, offP_index)
 
-  n = imap%offP_size
-  call co_sum(n)
+  call MPI_Allreduce(imap%offP_size, n, 1, MPI_INTEGER, MPI_SUM, MPI_COMM_WORLD)
   if (is_IOP) then
     write(*,'(a,i0,a)') 'Timing gather of ', n, ' off-process data elements'
     write(*,'(i0,a,i0,a)') imap%global_size, ' elements distributed across ', nPE, ' processes'
@@ -92,5 +93,7 @@ program main
 
   !! Verify the gathered off-process values
   if (any(array(1+imap%onP_size:) /= imap%offP_index)) error stop
+
+  call MPI_Finalize()
 
 end program
