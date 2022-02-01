@@ -24,19 +24,19 @@
 
 module index_map_type
 
+  use coarray_collectives
   implicit none
   private
 
   type, public :: index_map
-    integer :: onP_size = 0    ! number of indices assigned to this process (on-process)
-    integer :: offP_size = 0   ! number of off-process indices referenced from this process
+    integer :: onp_size = 0    ! number of indices assigned to this process (on-process)
+    integer :: offp_size = 0   ! number of off-process indices referenced from this process
     integer :: local_size = 0  ! number of local indices (on and off-process)
     integer :: global_size = 0 ! size of the global index set
     integer :: first        ! first global index of the range assigned to this process
     integer :: last         ! last global index of the range assigned to this process
-    integer, allocatable :: offP_index(:)
-    integer, allocatable :: src_pe(:), src_id(:)
-    integer, allocatable :: offset(:) !
+    integer, allocatable :: offp_index(:)
+    integer, allocatable :: src_image(:), src_index(:)
   contains
     procedure :: init
     procedure :: gather
@@ -45,69 +45,65 @@ module index_map_type
 
 contains
 
-  subroutine init(this, bsize, offP_index)
+  subroutine init(this, bsize, offp_index)
 
     class(index_map), intent(out) :: this
-    integer, intent(in) :: bsize, offP_index(:)
+    integer, intent(in) :: bsize, offp_index(:)
 
-    integer :: nPE, this_PE, pe
-    integer, allocatable :: bsizes(:)[:]
+    integer :: nproc
 
-    nPE = num_images()
-    this_PE = this_image()
+    nproc = num_images()
 
-    !! MPI_Allgather of bsize
-    allocate(bsizes(nPE)[*])
-    bsizes(this_PE)[1] = bsize
-    sync all
-    call co_broadcast(bsizes, 1)
-    sync all
+    this%onp_size = bsize
+    this%offp_size = 0
+    this%local_size = this%onp_size + this%offp_size
+    call co_sum_scan(bsize, this%last)
+    this%first = this%last - this%onp_size + 1
+    this%global_size = this%last
+    call co_broadcast(this%global_size, nproc)
 
-    this%onP_size = bsizes(this_PE)
-    this%last = sum(bsizes(1:this_PE))
-    this%first = this%last - this%onP_size + 1
-    this%local_size = this%onP_size
-    this%global_size = sum(bsizes)
-
-    !! offset is exclusive prefix sum of bsizes
-    allocate(this%offset(nPE+1))
-    this%offset(1) = 0
-    do pe = 1, nPE
-      this%offset(pe+1) = this%offset(pe) + bsizes(pe)
-    end do
-
-    call add_offP_index(this, offP_index)
-
-    sync all
+    call add_offp_index(this, offp_index)
 
   end subroutine init
 
-  subroutine add_offP_index(this, offP_index)
+  subroutine add_offp_index(this, offp_index)
 
     class(index_map), intent(inout) :: this
-    integer, intent(in) :: offP_index(:)
+    integer, intent(in) :: offp_index(:)
 
-    integer :: j, p
+    integer :: nproc, i, j
+    integer, allocatable :: last(:)[:]
 
-    this%offP_index = offP_index
-    !TODO: ensure offP_index is strictly increasing
+    !TODO: ensure offp_index is strictly increasing
 
-    this%offP_size  = size(this%offP_index)
-    this%local_size = this%onP_size + this%offP_size
+    this%offp_index = offp_index
+    this%offp_size  = size(this%offp_index)
+    this%local_size = this%onp_size + this%offp_size
 
-    allocate(this%src_pe(this%offP_size), this%src_id(this%offP_size))
+    nproc = num_images()
 
-    p = 1
-    do j = 1, this%offP_size
-      do while (this%offP_index(j) > this%offset(p+1))
-        p = p + 1
+    !! Gather the last global index owned by each image
+    allocate(last(0:nproc)[*])
+    if (this_image() == 1) last(0) = 0
+    last(this_image())[1] = this%last
+    sync all
+    call co_broadcast(last, 1)
+
+    !! Determine the image that owns each off-process index (SRC_IMAGE)
+    !! and the corresponding local index in that image (SRC_INDEX).
+    allocate(this%src_image(this%offp_size), this%src_index(this%offp_size))
+    i = 1
+    do j = 1, size(this%offp_index)
+      do while (this%offp_index(j) > last(i))
+        i = i + 1
+        !ASSERT(i <= nproc)
       end do
-      if (p == this_image()) stop 1 !TODO: replace by assertion
-      this%src_pe(j) = p
-      this%src_id(j) = this%offP_index(j) - this%offset(p)
+      if (i == this_image()) stop 1 !TODO: replace by assertion
+      this%src_image(j) = i
+      this%src_index(j) = this%offp_index(j) - last(i-1)
     end do
 
-  end subroutine add_offP_index
+  end subroutine add_offp_index
 
   elemental function global_index(this, n) result(gid)
     class(index_map), intent(in) :: this
@@ -115,24 +111,24 @@ contains
     integer :: gid
     gid = -1
     if (n < 1) return
-    if (n <= this%onP_size) then
+    if (n <= this%onp_size) then
       gid = this%first + n - 1
     else if (n <= this%local_size) then
-      gid = this%offP_index(n-this%onP_size)
+      gid = this%offp_index(n-this%onp_size)
     end if
   end function
 
   subroutine gather(this, local_data)
     class(index_map), intent(in) :: this
     integer, intent(inout) :: local_data(:)
-    call gather_aux(this, local_data(:this%onP_size), local_data(this%onP_size+1:))
+    call gather_aux(this, local_data(:this%onp_size), local_data(this%onp_size+1:))
   end subroutine
 
-  subroutine gather_aux(this, onP_data, offP_data)
+  subroutine gather_aux(this, onp_data, offp_data)
 
     class(index_map), intent(in) :: this
-    integer, intent(in), target :: onP_data(:)
-    integer, intent(out) :: offP_data(:)
+    integer, intent(in), target :: onp_data(:)
+    integer, intent(out) :: offp_data(:)
 
     integer :: j
 
@@ -142,12 +138,11 @@ contains
     type(box), allocatable :: src[:]
     allocate(src[*])
 
-    src%data => onP_data
+    src%data => onp_data
     sync all
-    do j = 1, this%offP_size
-      offP_data(j) = src[this%src_pe(j)]%data(this%src_id(j))
+    do j = 1, this%offp_size
+      offp_data(j) = src[this%src_image(j)]%data(this%src_index(j))
     end do
-    sync all
 
   end subroutine gather_aux
 

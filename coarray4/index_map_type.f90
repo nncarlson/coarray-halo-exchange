@@ -36,7 +36,7 @@ module index_map_type
     integer :: first        ! first global index of the range assigned to this process
     integer :: last         ! last global index of the range assigned to this process
     integer, allocatable :: offp_index(:), send_index(:)
-    integer, allocatable :: send_displs(:), recv_displs(:), counts(:), send_images(:)
+    integer, allocatable :: send_displs(:), recv_displs(:), counts(:), recv_images(:)
   contains
     procedure :: init
     procedure :: gather
@@ -72,8 +72,8 @@ contains
     integer, intent(in) :: offp_index(:)
 
     integer :: nproc, i, j, j1, n
-    integer, allocatable :: offp_image(:), send_counts(:), recv_displs(:)
-    integer, allocatable :: last(:)[:], recv_counts(:)[:], send_displs(:)[:]
+    integer, allocatable :: offp_image(:), send_counts(:), send_displs(:)
+    integer, allocatable :: last(:)[:], recv_counts(:)[:], recv_displs(:)[:]
 
     type box
       integer, pointer :: data(:)
@@ -134,35 +134,35 @@ contains
     !! We now know how many indices are being sent to/received from each image.
     !! Generate the displacements into the index data arrays for the start of
     !! the data for each image. These are exclusive sum scans of the count arrays.
-    allocate(recv_displs(nproc), send_displs(nproc)[*])
+    allocate(recv_displs(nproc)[*], send_displs(nproc))
     recv_displs(1) = 0
     send_displs(1) = 0
     do i = 2, nproc
       recv_displs(i) = recv_displs(i-1) + recv_counts(i-1)
       send_displs(i) = send_displs(i-1) + send_counts(i-1)
     end do
-    deallocate(send_counts)
+    deallocate(recv_counts)
     sync all
 
-    !! Compress the RECV_COUNTS and RECV_DISPLS arrays, dropping images where
+    !! Compress the SEND_COUNTS and SEND_DISPLS arrays, dropping images where
     !! no data is sent, and generate the corresponding list of images that
-    !! send us data (SEND_IMAGES). SEND_DISPLS are the corresponding
-    !! displacements into the send index data arrays *on the remote images*.
-    n = count(recv_counts > 0)
-    allocate(this%send_images(n), this%counts(n), this%recv_displs(n), this%send_displs(n))
+    !! receive data from us (RECV_IMAGES). RECV_DISPLS are the corresponding
+    !! displacements into the recv index data arrays *on the remote images*.
+    n = count(send_counts > 0)
+    allocate(this%recv_images(n), this%counts(n), this%recv_displs(n), this%send_displs(n))
     n = 0
     do i = 1, nproc
-      if (recv_counts(i) > 0) then
+      if (send_counts(i) > 0) then
         n = n + 1
-        this%send_images(n) = i
-        this%counts(n) = recv_counts(i)
-        this%recv_displs(n) = recv_displs(i)
-        this%send_displs(n) = send_displs(this_image())[i]
+        this%recv_images(n) = i
+        this%counts(n) = send_counts(i)
+        this%send_displs(n) = send_displs(i)
+        this%recv_displs(n) = recv_displs(this_image())[i]
       end if
     end do
-    deallocate(send_displs, recv_displs, recv_counts)
+    deallocate(send_displs, recv_displs, send_counts)
 
-    !! The components %COUNTS, %SEND_DISPLS, %RECV_DISPLS, and %SEND_IMAGES
+    !! The components %COUNTS, %SEND_DISPLS, %RECV_DISPLS, and %RECV_IMAGES
     !! initialized here establish the coarray communication pattern used by
     !! GATHER_AUX. The component %SEND_INDEX genererated next will be used to
     !! fill the send buffer; the receive buffer will be the off-process data
@@ -170,12 +170,12 @@ contains
 
     !! Communicate the global off-process indices to their owning images.
     allocate(buffer[*])
-    buffer%data => this%send_index
+    buffer%data => this%offp_index
     sync all
     do j = 1, size(this%counts)
-      associate (i => this%send_images(j), n => this%counts(j), &
+      associate (i => this%recv_images(j), n => this%counts(j), &
                  sd => this%send_displs(j), rd => this%recv_displs(j))
-        buffer[i]%data(sd+1:sd+n) = this%offp_index(rd+1:rd+n)
+        this%send_index(sd+1:sd+n) = buffer[i]%data(rd+1:rd+n)
       end associate
     end do
     sync all
@@ -206,34 +206,28 @@ contains
   subroutine gather_aux(this, onp_data, offp_data)
 
     class(index_map), intent(in) :: this
-    integer, intent(in), target :: onp_data(:)
-    integer, intent(out) :: offp_data(:)
+    integer, intent(in) :: onp_data(:)
+    integer, intent(out), target :: offp_data(:)
 
     integer :: j
-
-    !NB: An allocatable %data component is better but not possible due to bugs:
-    ! https://github.com/nncarlson/fortran-compiler-tests/blob/master/gfortran-bugs/gfortran-20220128.f90
-    ! https://github.com/nncarlson/fortran-compiler-tests/blob/master/nag-bugs/nag-20220127.f90
+    integer, allocatable :: send_buf(:)
 
     type box
-      !integer, allocatable :: data(:)
       integer, pointer :: data(:)
     end type
-    type(box), allocatable :: send_buf[:]
+    type(box), allocatable :: recv_buf[:]
+    allocate(recv_buf[*])
 
-    allocate(send_buf[*])
-    allocate(send_buf%data(size(this%send_index)))
-    send_buf%data = onp_data(this%send_index)
+    recv_buf%data => offp_data
+    send_buf = onp_data(this%send_index)
     sync all
     do j = 1, size(this%counts)
-      associate (i  => this%send_images(j), n => this%counts(j), &
+      associate (i => this%recv_images(j), n => this%counts(j), &
                  sd => this%send_displs(j), rd => this%recv_displs(j))
-        offp_data(rd+1:rd+n) = send_buf[i]%data(sd+1:sd+n)
+        recv_buf[i]%data(rd+1:rd+n) = send_buf(sd+1:sd+n)
       end associate
     end do
-
     sync all
-    deallocate(send_buf%data)
 
   end subroutine gather_aux
 

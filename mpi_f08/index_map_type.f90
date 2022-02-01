@@ -24,12 +24,12 @@
 
 module index_map_type
 
-  use mpi
+  use mpi_f08
   implicit none
   private
 
   type, public :: index_map
-    integer :: comm
+    type(mpi_comm) :: comm
     integer :: onp_size = 0    ! number of indices assigned to this process (on-process)
     integer :: offp_size = 0   ! number of off-process indices referenced from this process
     integer :: local_size = 0  ! number of local indices (on and off-process)
@@ -50,22 +50,22 @@ contains
   subroutine init(this, comm, bsize, offp_index)
 
     class(index_map), intent(out) :: this
-    integer, intent(in) :: comm
+    type(mpi_comm), intent(in) :: comm
     integer, intent(in) :: bsize, offp_index(:)
 
     integer :: nproc, ierr
 
     this%comm = comm
 
-    call MPI_Comm_size(comm, nproc, ierr)
+    call MPI_Comm_size(comm, nproc)
 
     this%onp_size = bsize
     this%offp_size = 0
     this%local_size = this%onp_size + this%offp_size
-    call MPI_Scan(bsize, this%last, 1, MPI_INTEGER, MPI_SUM, this%comm, ierr)
+    call MPI_Scan(bsize, this%last, 1, MPI_INTEGER, MPI_SUM, this%comm)
     this%first = this%last - this%onp_size + 1
     this%global_size = this%last
-    call MPI_Bcast(this%global_size, 1, MPI_INTEGER, nproc-1, this%comm, ierr)
+    call MPI_Bcast(this%global_size, 1, MPI_INTEGER, nproc-1, this%comm)
 
     call add_offp_index(this, offp_index)
 
@@ -81,7 +81,7 @@ contains
     integer, allocatable :: last(:), offp_rank(:), send_index(:)
     integer, allocatable :: recv_counts(:), recv_ranks(:)
     integer, allocatable :: send_counts(:), send_ranks(:)
-    integer :: new_comm
+    type(mpi_comm) :: new_comm
 
     !TODO: ensure offp_index is strictly increasing
 
@@ -89,13 +89,13 @@ contains
     this%offp_size  = size(this%offp_index)
     this%local_size = this%onp_size + this%offp_size
 
-    call MPI_Comm_size(this%comm, nproc, ierr)
-    call MPI_Comm_rank(this%comm, my_rank, ierr)
+    call MPI_Comm_size(this%comm, nproc)
+    call MPI_Comm_rank(this%comm, my_rank)
 
     !! Determine which rank owns each off-process index (OFFP_RANK).
     !! OFFP_RANK will be ordered if OFFP_INDEX is ordered (we need this later).
     allocate(last(0:nproc-1), offp_rank(this%offp_size))
-    call MPI_Allgather(this%last, 1, MPI_INTEGER, last, 1, MPI_INTEGER, this%comm, ierr)
+    call MPI_Allgather(this%last, 1, MPI_INTEGER, last, 1, MPI_INTEGER, this%comm)
     rank = 0
     do j = 1, size(this%offp_index)
       do while (this%offp_index(j) > last(rank))
@@ -127,7 +127,7 @@ contains
     !! Distribute the number of indices received from each rank to that rank.
     !! The result is the number of indices sent to each rank (SEND_COUNTS).
     allocate(send_counts(0:nproc-1))
-    call MPI_Alltoall(recv_counts, 1, MPI_INTEGER, send_counts, 1, MPI_INTEGER, this%comm, ierr)
+    call MPI_Alltoall(recv_counts, 1, MPI_INTEGER, send_counts, 1, MPI_INTEGER, this%comm)
 
     !! We now know which ranks we will be receiving indexed data from, and which
     !! ranks we will be sending indexed data to.  This all that is needed to
@@ -167,7 +167,7 @@ contains
     call MPI_Dist_graph_create_adjacent(this%comm, &
         size(recv_ranks), recv_ranks, this%recv_counts, &
         size(send_ranks), send_ranks, this%send_counts, &
-        MPI_INFO_NULL, .false., new_comm, ierr)
+        MPI_INFO_NULL, .false., new_comm)
     this%comm = new_comm
 
     !! The components %RECV_COUNTS, %RECV_DISPLS, %SEND_COUNTS and %SEND_DIPSLS
@@ -232,7 +232,7 @@ contains
     integer, allocatable :: send_buf(:)
     send_buf = onp_data(this%send_index)
     call MPI_Neighbor_alltoallv(send_buf, this%send_counts, this%send_displs, MPI_INTEGER, &
-        offp_data, this%recv_counts, this%recv_displs, MPI_INTEGER, this%comm, ierr)
+        offp_data, this%recv_counts, this%recv_displs, MPI_INTEGER, this%comm)
   end subroutine
 
 end module index_map_type
