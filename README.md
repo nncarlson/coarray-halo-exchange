@@ -65,6 +65,12 @@ Each image pre-gathers its on-process data destined for other images into
 contiguous blocks of a send buffer, and then writes those blocks to
 corresponding blocks of remote image off-process data arrays.
 
+Version 1 is the most straightforward and simple implementation. The other
+versions were intended to explore whether there is a performance preference
+between reading from or writing to remote images, and whether performance
+gains could be made by structuring the transfers to/from remote images in
+contiguous blocks of data.
+
 The distributed index set mapping and the associated gather operation
 are implemented by the module `index_map_type.f90` found in the subdirectories
 `coarray1`, `coarray2`, `coarray3`, and `coarray4` for each of the different
