@@ -130,6 +130,7 @@ compilers; your details may differ somewhat:
     - `ifort -coarray -O3 coarray_collectives.f90 index_map_type.f90 main.f90`
     - `export FOR_COARRAY_NUM_IMAGES=12`
     - `./a.out <test arguments>`
+    - See [INTEL-ISSUES.md](INTEL-ISSUES.md) for problems you may encounter and their solution. 
   * GNU Fortran / OpenCoarrays:
     - `caf -O3 coarray_collectives.f90 index_map_type.f90 main.f90`
     - `cafrun -n 12 ./a.out <test arguments>`
