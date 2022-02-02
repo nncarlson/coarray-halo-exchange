@@ -147,3 +147,4 @@ compilers; your details may differ somewhat:
 
 ### Results
 * [Linux / 12-core Threadripper 2920X / 12 images](results/thelio-12.md)
+* [Variations of version1](results/thelio-12-v1-variations.md); NAG beats MPI
